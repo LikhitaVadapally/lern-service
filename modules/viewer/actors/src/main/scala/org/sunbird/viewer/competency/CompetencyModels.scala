@@ -15,9 +15,20 @@ case class CompetencyMeta(frameworkId: String,
                           leaves: Set[String],
                           depth: Int,
                           roleSkills: Map[String, Set[String]],
-                          claimsByNode: Map[String, List[String]]) {
+                          claimsByNode: Map[String, List[String]],
+                          codeByName: Map[String, String] = Map.empty) {
 
   def isLeaf(code: String): Boolean = code != null && leaves.contains(code)
+
+  /**
+   * The leaf a content tag names: the tag itself when it is a leaf code, else the leaf whose NAME it
+   * is (case-insensitive). Competency content is tagged with codes; taxonomy content (USF) with
+   * names, so both resolve to the same code the profile stores.
+   */
+  def leafOf(tag: String): Option[String] =
+    if (tag == null) None
+    else if (isLeaf(tag)) Some(tag)
+    else codeByName.get(tag.trim.toLowerCase)
 
   /** Leaf skills one role requires. Empty when the role is unknown or declares none. */
   def skillsOf(roleId: String): Set[String] =

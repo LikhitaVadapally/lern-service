@@ -133,9 +133,12 @@ class LpPolicyUtil {
   }
 
   def lpMeta(rootId: String, ctx: RequestContext): LpMeta = cachedMeta(rootId) {
-    val rootJson = searchByIds(List(rootId), List("policy", "competencyFramework", "childNodes"))
+    val rootJson = searchByIds(List(rootId), List("policy", "competencyFramework", "framework", "childNodes"))
     val policy = parseField(rootJson, rootId, "policy").getOrElse("Strict")
-    val competencyFramework = parseField(rootJson, rootId, "competencyFramework").getOrElse("")
+    // Same fallback as CompetencyFrameworkUtil.frameworkOf: a path tagged from a taxonomy framework
+    // (USF) awards its skills too.
+    val competencyFramework = parseField(rootJson, rootId, "competencyFramework")
+      .orElse(parseField(rootJson, rootId, "framework")).getOrElse("")
     val childNodes = parseLpNodes(rootJson).get(rootId).map(_.childNodes).getOrElse(Nil)
     val ids = (rootId :: childNodes).distinct
     LpMeta(policy, competencyFramework, parseLpNodes(searchByIds(ids, List("primaryCategory", "childNodes"))))

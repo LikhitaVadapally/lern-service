@@ -27,6 +27,7 @@ object CompetencyFrameworkUtil {
   private val logger = LoggerFactory.getLogger(classOf[CompetencyFrameworkUtil])
 
   val CAT_COMPETENCY = "competency"
+  val CAT_SKILL = "skill"
 
   private def cfg(key: String, default: String): String =
     Option(ProjectUtil.getConfigValue(key)).map(_.trim).filter(_.nonEmpty).getOrElse(default)
@@ -38,7 +39,7 @@ object CompetencyFrameworkUtil {
   private val metaCache = new java.util.concurrent.ConcurrentHashMap[String, (Long, CompetencyMeta)]()
   // node id -> its skill tags. Keeps transition-time crediting off the search service.
   private val claimCache = new java.util.concurrent.ConcurrentHashMap[String, (Long, List[String])]()
-  // collection id -> the competencyFramework it declares
+  // collection id -> the framework its skills belong to (competencyFramework, else framework)
   private val fwOfCollection = new java.util.concurrent.ConcurrentHashMap[String, (Long, String)]()
 
   def invalidate(frameworkId: String): Unit =
@@ -204,6 +205,41 @@ object CompetencyFrameworkUtil {
   }
 
   /**
+   * Skills of a TAXONOMY framework (USF and the like): every childless term of its flat `skill`
+   * category.
+   *
+   * Only read when there is no `competency` category. A competency framework may also carry a
+   * `skill` category as one of its association tiers (shape 2 above), and there `parseTree` is the
+   * authority - reading it flat would credit interior terms.
+   */
+  private[competency] def parseFlatSkills(frameworkJson: String): Set[String] =
+    if (termsOf(frameworkJson, CAT_COMPETENCY).nonEmpty) Set.empty
+    else termsOf(frameworkJson, CAT_SKILL)
+      .filter(t => asList(t.get("children")).isEmpty)
+      .flatMap(t => str(t, "code"))
+      .toSet
+
+  /**
+   * Lower-cased term name -> leaf code.
+   *
+   * Taxonomy content stores the term NAME in `skill` ("Data Visualization"), not its code ("dv"),
+   * while the profile stores codes - they survive a rename. Walks nested `children` too, because a
+   * nested term carries no identifier and so is absent from `termIndex`. A name shared by two
+   * leaves is ambiguous and is left out: guessing would credit the wrong skill.
+   */
+  private[competency] def parseLeafNames(frameworkJson: String, leaves: Set[String]): Map[String, String] = {
+    val pairs = scala.collection.mutable.ListBuffer[(String, String)]()
+    def collect(t: util.Map[String, AnyRef], depth: Int): Unit = if (depth < 50) {
+      for { code <- str(t, "code") if leaves.contains(code); name <- str(t, "name") }
+        pairs += (name.trim.toLowerCase -> code)
+      asList(t.get("children")).foreach(c => collect(c, depth + 1))
+    }
+    asList(frameworkMap(frameworkJson).get("categories"))
+      .foreach(c => asList(c.get("terms")).foreach(t => collect(t, 0)))
+    pairs.toList.distinct.groupBy(_._1).collect { case (name, List((_, code))) => name -> code }
+  }
+
+  /**
    * Keeps only the role requirements that name a real leaf.
    *
    * The role -> skill map is authored in `role_skill`, not in the framework, so nothing validates it
@@ -315,13 +351,21 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
     if (hit != null && hit._1 > now) return hit._2
 
     val json = get(frameworkReadUrl(frameworkId))
-    val (leaves, depth) = parseTree(json)
+    val (treeLeaves, treeDepth) = parseTree(json)
+    // No competency tree: a taxonomy framework's flat `skill` category is one tier of skills.
+    val flat = treeLeaves.isEmpty
+    val (leaves, depth) = if (flat) (parseFlatSkills(json), 1) else (treeLeaves, treeDepth)
     if (leaves.isEmpty) {
-      logger.warn(s"CompetencyFrameworkUtil: framework $frameworkId resolved no leaf skills; " +
-        "check that the competency category exists and its terms nest by children")
+      logger.warn(s"CompetencyFrameworkUtil: framework $frameworkId resolved no skills; " +
+        "it needs a competency category nesting by children, or a flat skill category")
+      // Negative-cached: `frameworkOf` falls back to the taxonomy `framework`, so most courses now
+      // reach here with a framework that has no skills (NCF and the like). Re-reading it on every
+      // completion would put a framework read on the hot path for nothing. Only a framework that was
+      // actually read is cached: a failed read ("{}") must be retried, not remembered as skill-less.
+      if (!frameworkMap(json).isEmpty) metaCache.put(frameworkId, (now + metaTtl, CompetencyMeta.empty))
       return CompetencyMeta.empty
     }
-    if (depth < 3)
+    if (!flat && depth < 3)
       logger.warn(s"CompetencyFrameworkUtil: framework $frameworkId is only $depth tiers deep; " +
         "the spec requires at least three")
 
@@ -331,7 +375,8 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
       leaves = leaves,
       depth = depth,
       roleSkills = leafOnly(frameworkId, roleSource(frameworkId, ctx), leaves),
-      claimsByNode = Map.empty)
+      claimsByNode = Map.empty,
+      codeByName = parseLeafNames(json, leaves))
     metaCache.put(frameworkId, (now + metaTtl, built))
     built
   }
@@ -345,17 +390,24 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
     if (StringUtils.isBlank(frameworkId)) Map.empty
     else meta(frameworkId, ctx).roleSkills
 
-  /** `competencyFramework` declared on a collection. */
+  /**
+   * The framework a collection's skills belong to: `competencyFramework`, else its taxonomy
+   * `framework`.
+   *
+   * The fallback is what lets a course tagged from a taxonomy framework (USF and the like) award
+   * skills. A taxonomy framework with no skill category resolves to CompetencyMeta.empty in `meta`,
+   * so falling back credits nothing it should not.
+   */
   def frameworkOf(collectionId: String, ctx: RequestContext): Option[String] = {
     if (StringUtils.isBlank(collectionId)) return None
     val now = System.currentTimeMillis()
     val hit = fwOfCollection.get(collectionId)
     if (hit != null && hit._1 > now) return Some(hit._2).filter(_.nonEmpty)
-    val json = searchByIds(List(collectionId), List("competencyFramework"))
+    val json = searchByIds(List(collectionId), List("competencyFramework", "framework"))
     val fw = result(json).asScala.values.collect {
       case l: util.List[_] => l.asInstanceOf[util.List[util.Map[String, AnyRef]]].asScala
     }.flatten.toList.headOption
-      .flatMap(r => Option(r.get("competencyFramework")).map(_.toString)).filter(_.nonEmpty)
+      .flatMap(r => str(r, "competencyFramework").orElse(str(r, "framework")))
     fwOfCollection.put(collectionId, (now + metaTtl, fw.getOrElse("")))
     fw
   }
@@ -422,12 +474,13 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
   def leafClaimsOf(nodeIds: List[String], m: CompetencyMeta,
                    ctx: RequestContext): Map[String, List[String]] = {
     if (m.isEmpty) return Map.empty
-    claimsOf(nodeIds, ctx).map { case (node, codes) =>
-      val (ok, bad) = codes.partition(m.isLeaf)
+    claimsOf(nodeIds, ctx).map { case (node, tags) =>
+      val resolved = tags.map(tag => tag -> m.leafOf(tag))
+      val bad = resolved.collect { case (tag, None) => tag }
       if (bad.nonEmpty)
         logger.warn(s"CompetencyFrameworkUtil: node $node is tagged with non-leaf skills " +
           s"[${bad.mkString(",")}] in ${m.frameworkId}; ignored")
-      node -> ok
+      node -> resolved.flatMap(_._2).distinct
     }.filter(_._2.nonEmpty)
   }
 }
