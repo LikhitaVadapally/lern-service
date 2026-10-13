@@ -28,6 +28,16 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
   def meta(frameworkId: String, ctx: RequestContext): CompetencyMeta =
     frameworkUtil.meta(frameworkId, ctx)
 
+  /**
+   * The first candidate framework that actually has skills, else the first named one.
+   *
+   * `competencyFramework` is not trustworthy on its own: the editor fills it with a taxonomy
+   * framework (NCF) that has no skills, while the course's skills come from `framework` (USF).
+   * Falling back to the first named one keeps "declares no framework" checks meaningful.
+   */
+  def skillFramework(candidates: List[String], ctx: RequestContext): String =
+    frameworkUtil.firstWithSkills(candidates, ctx)
+
   /** node id -> the leaf skills it teaches, for the waiver test. */
   def claimsOf(nodeIds: List[String], m: CompetencyMeta,
                ctx: RequestContext): Map[String, List[String]] =
@@ -182,7 +192,8 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
   def coverage(collectionId: String, roleOverride: Option[String],
                ctx: RequestContext): CoverageReport = {
     val lp = lpPolicyUtil.lpMeta(collectionId, ctx)
-    val m = meta(lp.competencyFramework, ctx)
+    val fw = skillFramework(lp.frameworkCandidates, ctx)
+    val m = meta(fw, ctx)
     val roleId = roleOverride.orElse(frameworkUtil.targetRoleOf(collectionId, ctx)).getOrElse("")
     val courses = lpPolicyUtil.coursesOf(lp)
     val skillsByCourse = claimsOf(courses, m, ctx)
@@ -190,7 +201,7 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
     val assessed = claimsOf(lpPolicyUtil.questionsIn(lp), m, ctx).values.flatten.toSet
     val report = CoverageReport(
       collectionId = collectionId,
-      frameworkId = lp.competencyFramework,
+      frameworkId = fw,
       roleId = roleId,
       courses = courses.size,
       rows = GapCalculator.coverage(m.skillsOf(roleId), skillsByCourse),

@@ -404,12 +404,25 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
     val hit = fwOfCollection.get(collectionId)
     if (hit != null && hit._1 > now) return Some(hit._2).filter(_.nonEmpty)
     val json = searchByIds(List(collectionId), List("competencyFramework", "framework"))
-    val fw = result(json).asScala.values.collect {
+    val row = result(json).asScala.values.collect {
       case l: util.List[_] => l.asInstanceOf[util.List[util.Map[String, AnyRef]]].asScala
     }.flatten.toList.headOption
-      .flatMap(r => str(r, "competencyFramework").orElse(str(r, "framework")))
+    val candidates = row.toList.flatMap(r => List(str(r, "competencyFramework"), str(r, "framework")).flatten)
+    val fw = Some(firstWithSkills(candidates, ctx)).filter(_.nonEmpty)
     fwOfCollection.put(collectionId, (now + metaTtl, fw.getOrElse("")))
     fw
+  }
+
+  /**
+   * The first framework that has skills, else the first non-blank one, else "".
+   *
+   * A course can declare `competencyFramework: NCF` (the editor's default) next to
+   * `framework: USF`; taking the first non-blank one would pick NCF and credit nothing. `meta` is
+   * cached, negatively too, so probing a skill-less framework costs one read per TTL.
+   */
+  def firstWithSkills(candidates: List[String], ctx: RequestContext): String = {
+    val named = candidates.filter(c => StringUtils.isNotBlank(c)).distinct
+    named.find(f => !meta(f, ctx).isEmpty).orElse(named.headOption).getOrElse("")
   }
 
   /** `targetRole` declared on a collection. Not cached: read once per coverage request. */

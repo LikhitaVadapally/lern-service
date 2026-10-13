@@ -20,7 +20,11 @@ case class NodeMeta(primaryCategory: String, childNodes: List[String])
  * `competencyFramework` and the `competencies` field, rather than from the taxonomy framework's
  * highest-index category.
  */
-case class LpMeta(policy: String, competencyFramework: String, nodes: Map[String, NodeMeta])
+case class LpMeta(policy: String, competencyFramework: String, nodes: Map[String, NodeMeta],
+                  framework: String = "") {
+  /** Where the path's skills may come from, in preference order. See CompetencyService.skillFramework. */
+  def frameworkCandidates: List[String] = List(competencyFramework, framework)
+}
 
 object LpPolicyUtil {
   private val mapper = new ObjectMapper()
@@ -135,13 +139,12 @@ class LpPolicyUtil {
   def lpMeta(rootId: String, ctx: RequestContext): LpMeta = cachedMeta(rootId) {
     val rootJson = searchByIds(List(rootId), List("policy", "competencyFramework", "framework", "childNodes"))
     val policy = parseField(rootJson, rootId, "policy").getOrElse("Strict")
-    // Same fallback as CompetencyFrameworkUtil.frameworkOf: a path tagged from a taxonomy framework
-    // (USF) awards its skills too.
-    val competencyFramework = parseField(rootJson, rootId, "competencyFramework")
-      .orElse(parseField(rootJson, rootId, "framework")).getOrElse("")
+    val competencyFramework = parseField(rootJson, rootId, "competencyFramework").getOrElse("")
+    // The taxonomy framework too: a path tagged from USF awards its skills (see frameworkCandidates).
+    val framework = parseField(rootJson, rootId, "framework").getOrElse("")
     val childNodes = parseLpNodes(rootJson).get(rootId).map(_.childNodes).getOrElse(Nil)
     val ids = (rootId :: childNodes).distinct
-    LpMeta(policy, competencyFramework, parseLpNodes(searchByIds(ids, List("primaryCategory", "childNodes"))))
+    LpMeta(policy, competencyFramework, parseLpNodes(searchByIds(ids, List("primaryCategory", "childNodes"))), framework)
   }
 
   def policyOf(meta: LpMeta): String = meta.policy match {

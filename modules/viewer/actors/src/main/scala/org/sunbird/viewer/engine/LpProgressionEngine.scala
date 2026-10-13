@@ -75,7 +75,7 @@ class LpProgressionEngine(cassandraOperation: CassandraOperation,
     cassandraOperation.updateRecordV2(enrolKeyspace, enrolTable, select, update, true, ctx)
     logger.info(ctx, s"viewer.lp: root progress | user=$userId root=$rootId done=$done/$total pct=$pct status=$rootStatus")
     if (rootStatus == 2 && currentStatus != 2) {
-      val fw = meta.competencyFramework
+      val fw = competencyService.skillFramework(meta.frameworkCandidates, ctx)
       // the skills the programme itself declares, credited once on the completion transition.
       // Credit before issuing, so the certificate attests what the learner holds afterwards.
       if (fw.nonEmpty)
@@ -93,7 +93,7 @@ class LpProgressionEngine(cassandraOperation: CassandraOperation,
   /** Course skills plus any assessment credit, for the nodes this aggregate saw complete. */
   private def creditCompleted(userId: String, rootId: String, batchId: String, meta: LpMeta,
                               completedNow: Set[String], ctx: RequestContext): Unit = {
-    val fw = meta.competencyFramework
+    val fw = competencyService.skillFramework(meta.frameworkCandidates, ctx)
     logger.info(ctx, s"viewer.lp: creditCompleted | user=$userId root=$rootId fw=[$fw] " +
       s"completedNow=[${completedNow.mkString(",")}]")
     if (fw.isEmpty || completedNow.isEmpty) return
@@ -134,7 +134,7 @@ class LpProgressionEngine(cassandraOperation: CassandraOperation,
     // skills). PriorLearning waives already-completed courses and is not gated on it.
     if (policy.equalsIgnoreCase("Adaptive") && preAssessment.exists(pa => !courseComplete(pa))) return true
 
-    val fw = meta.competencyFramework
+    val fw = competencyService.skillFramework(meta.frameworkCandidates, ctx)
     if (policy.equalsIgnoreCase("Adaptive") && fw.isEmpty) {
       logger.warn(ctx, s"viewer.lp: Adaptive LP declares no competencyFramework; halting | user=$userId root=$rootId", null)
       return false
