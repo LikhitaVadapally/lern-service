@@ -3,9 +3,11 @@ package org.sunbird.viewer.competency
 /**
  * Resolved, cached vocabulary of one competency framework.
  *
- * The framework is one `competency` category whose terms nest by `children`, plus an optional
- * `role` category. Only a term with no children is taggable, so `leaves` is what every lookup is
- * checked against. `roleSkills` maps a role code to the leaf skills it requires.
+ * The framework is one `competency` category whose terms nest by `children`. Only a term with no
+ * children is taggable, so `leaves` is what every lookup is checked against. `roleSkills` maps a
+ * role code (from `role_skill`) to the leaf skills it requires, RETIRED roles included so anyone
+ * holding one is still measured; `retiredRoles` names them. Both are empty in the cached vocabulary
+ * and filled per request by `CompetencyFrameworkUtil.withRoles`.
  *
  * `tierLabels` are display names for the tree's depths, outermost first. They name nothing the
  * engine reads; depth comes from the tree, not from the labels.
@@ -15,7 +17,11 @@ case class CompetencyMeta(frameworkId: String,
                           leaves: Set[String],
                           depth: Int,
                           roleSkills: Map[String, Set[String]],
-                          claimsByNode: Map[String, List[String]]) {
+                          claimsByNode: Map[String, List[String]],
+                          retiredRoles: Set[String] = Set.empty) {
+
+  /** Roles that may still be offered or assigned. */
+  def liveRoleSkills: Map[String, Set[String]] = roleSkills -- retiredRoles
 
   def isLeaf(code: String): Boolean = code != null && leaves.contains(code)
 
@@ -124,6 +130,11 @@ object RoleSource {
   val HRMS = "HRMS"
   val PROFILE = "PROFILE"
   val SELF = "SELF"
+}
+
+/** Every authored role of a framework with the skills it requires, RETIRED included. */
+case class RoleIndex(skills: Map[String, Set[String]], retired: Set[String]) {
+  def live: Set[String] = skills.keySet -- retired
 }
 
 /** One authored requirement row: role X requires leaf skill Y, in framework Z. */

@@ -34,8 +34,7 @@ object RoleAuthoring {
   /**
    * The version a role should carry after applying `d`.
    *
-   * Bumped only on a real change, so re-applying an unchanged matrix is a no-op and an in-flight
-   * learning path pinned to a version is not invalidated by a no-op import.
+   * Bumped only on a real change, so re-applying an unchanged matrix leaves it as it was.
    */
   def nextVersion(currentVersion: Int, d: RoleDiff): Int =
     if (d.added.nonEmpty || d.removed.nonEmpty) currentVersion + 1 else math.max(currentVersion, 1)

@@ -48,9 +48,9 @@ learner.
 | **Role** | A named set of leaf skills — a job post, a grade, a career track | Knowlg framework, `role` category | 0–500 |
 | **Evidence** | A dated, attributed record that a learner holds a leaf skill | lern-service, append-only | Per learner, per skill |
 
-![The competency framework model — framework, nested skill tree, roles, tagged content](competency-model-v2.svg)
+![The competency framework model — framework, nested skill tree, roles, tagged content](images/competency-model-v2.svg)
 
-Editable source: [`competency-model-v2.excalidraw`](competency-model-v2.excalidraw) — open at
+Editable source: [`competency-model-v2.excalidraw`](images/competency-model-v2.excalidraw) — open at
 excalidraw.com or with the VS Code Excalidraw extension. Re-export the SVG after any edit.
 
 ### Hierarchy rules
@@ -182,9 +182,9 @@ Every difference is configuration or a field left null.
 
 ## Creation workflow
 
-![Creation workflow — curate, publish, tag, assemble, deliver](competency-creation-v2.svg)
+![Creation workflow — curate, publish, tag, assemble, deliver](images/competency-creation-v2.svg)
 
-Editable source: [`competency-creation-v2.excalidraw`](competency-creation-v2.excalidraw)
+Editable source: [`competency-creation-v2.excalidraw`](images/competency-creation-v2.excalidraw)
 
 | Step | Owner | Output | Volume | Frequency |
 |---|---|---|---|---|
@@ -266,9 +266,9 @@ it is tagged with can only ever be completion-derived.
 
 ## Consumption workflow
 
-![Consumption workflow — the closed loop, including the private-LP branch](competency-consumption-v2.svg)
+![Consumption workflow — the closed loop, including the private-LP branch](images/competency-consumption-v2.svg)
 
-Editable source: [`competency-consumption-v2.excalidraw`](competency-consumption-v2.excalidraw)
+Editable source: [`competency-consumption-v2.excalidraw`](images/competency-consumption-v2.excalidraw)
 
 ### Attainment
 
