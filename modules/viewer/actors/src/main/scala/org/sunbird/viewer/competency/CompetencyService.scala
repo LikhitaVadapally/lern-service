@@ -15,8 +15,14 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
 
   private val logger = new LoggerUtil(classOf[CompetencyService])
 
-  private[competency] val dao = new CompetencyDao(cassandra, keyspace)
-  private[competency] val frameworkUtil = CompetencyFrameworkUtil(dao.readRoleSkills)
+  // Factories rather than inline construction so a test can supply an in-memory DAO and a canned
+  // framework. Called from the constructor: an override must not read the subclass's own fields.
+  protected def newDao(): CompetencyDao = new CompetencyDao(cassandra, keyspace)
+  protected def newFrameworkUtil(dao: CompetencyDao): CompetencyFrameworkUtil =
+    CompetencyFrameworkUtil(dao.readRoleSkills)
+
+  private[competency] val dao = newDao()
+  private[competency] val frameworkUtil = newFrameworkUtil(dao)
   private[competency] val ledger =
     new CompetencyLedger(dao, frameworkUtil, new CassandraService(Some(cassandra)))
   private[competency] val projector = new CompetencyProjector(dao, ledger, frameworkUtil)
@@ -37,6 +43,10 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
    */
   def skillFramework(candidates: List[String], ctx: RequestContext): String =
     frameworkUtil.firstWithSkills(candidates, ctx)
+
+  /** `meta` plus the roles, read fresh. For the paths that answer questions about roles. */
+  def metaWithRoles(frameworkId: String, ctx: RequestContext): CompetencyMeta =
+    frameworkUtil.withRoles(frameworkId, ctx)
 
   /** node id -> the leaf skills it teaches, for the waiver test. */
   def claimsOf(nodeIds: List[String], m: CompetencyMeta,
@@ -95,7 +105,17 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
   def role(userId: String, ctx: RequestContext): Option[RoleAssignment] =
     dao.roleOf(userId, ctx)
 
+  /**
+   * Writes a learner's current and target roles.
+   *
+   * Every role the assignment INTRODUCES must be live in the framework; an unknown code would be
+   * measured against nothing. A role the learner already holds is kept even if it has since been
+   * retired, so changing only the targets never fails on the current role.
+   */
   def updateRole(a: RoleAssignment, ctx: RequestContext): Unit = {
+    val held = dao.roleOf(a.userId, ctx).filter(_.frameworkId == a.frameworkId)
+      .map(e => e.currentRole.toSet ++ e.targetRoles).getOrElse(Set.empty)
+    requireLive(a.frameworkId, a.currentRole.toSet ++ a.targetRoles -- held, ctx)
     dao.upsertRole(a, ctx)
     logger.info(ctx, s"competency.role: set | user=${a.userId} current=${a.currentRole.getOrElse("-")} " +
       s"targets=[${a.targetRoles.mkString(",")}] source=${a.source}")
@@ -109,15 +129,12 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
    * unreportable: an org cannot say "42% of our ICU nurses are ready" if nurses self-declare.
    * Hence an admin path, stamped HRMS, with the learner's own `targetRoles` preserved untouched.
    *
-   * The role must exist in the framework. Assigning an unknown one would leave a learner measured
-   * against requirements nobody authored, which reads as 100% ready for everything.
+   * The role must be live in the framework: an unknown one would leave a learner measured against
+   * requirements nobody authored.
    */
   def assignRole(userId: String, frameworkId: String, role: String,
                  ctx: RequestContext): RoleAssignment = {
-    val known = dao.readRoleSkills(frameworkId, ctx)
-    if (!known.contains(role))
-      throw new IllegalArgumentException(
-        s"No such role in $frameworkId: $role. Known roles: ${known.keys.toList.sorted.mkString(", ")}")
+    requireLive(frameworkId, Set(role), ctx)
 
     val existing = dao.roleOf(userId, ctx)
     val next = RoleAssignment(
@@ -133,14 +150,30 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
     next
   }
 
-  /** Gap against one role. Empty when the role requires nothing. */
+  /**
+   * Rejects any role not live in the framework. Reads the table, not the cached framework, so a
+   * role authored a moment ago is assignable at once.
+   */
+  private def requireLive(frameworkId: String, roles: Set[String], ctx: RequestContext): Unit =
+    if (roles.nonEmpty) {
+      val live = dao.readRoleSkills(frameworkId, ctx).live
+      val unknown = roles -- live
+      if (unknown.nonEmpty)
+        throw new IllegalArgumentException(
+          s"No such live role in $frameworkId: ${unknown.toList.sorted.mkString(", ")}. " +
+            s"Live roles: ${live.toList.sorted.mkString(", ")}")
+    }
+
+  /**
+   * Gap against one role, RETIRED roles included. None when the role cannot be measured - it does
+   * not exist, or requires nothing - so the caller never reports such a role as 100% ready.
+   */
   def gap(userId: String, frameworkId: String, roleId: String,
-          ctx: RequestContext): (List[GapRow], Int) = {
-    val required = frameworkUtil.requirements(frameworkId, roleId, ctx)
-    if (required.isEmpty) return (Nil, 100)
-    val rows = GapCalculator.rows(required, heldSkills(userId, ctx))
-    (rows, GapCalculator.readiness(rows))
-  }
+          ctx: RequestContext): Option[(List[GapRow], Int)] =
+    frameworkUtil.requirements(frameworkId, roleId, ctx).map { required =>
+      val rows = GapCalculator.rows(required, heldSkills(userId, ctx))
+      (rows, GapCalculator.readiness(rows))
+    }
 
   /**
    * The skills a programme attests for one learner: what its courses teach, intersected with what
@@ -165,7 +198,7 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
   /** Skills still outstanding for a role. */
   def outstanding(userId: String, frameworkId: String, roleId: String,
                   ctx: RequestContext): List[String] =
-    GapCalculator.outstanding(gap(userId, frameworkId, roleId, ctx)._1)
+    gap(userId, frameworkId, roleId, ctx).map(g => GapCalculator.outstanding(g._1)).getOrElse(Nil)
 
   /**
    * The gap, plus the courses and paths that close it, best first.
@@ -193,7 +226,7 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
                ctx: RequestContext): CoverageReport = {
     val lp = lpPolicyUtil.lpMeta(collectionId, ctx)
     val fw = skillFramework(lp.frameworkCandidates, ctx)
-    val m = meta(fw, ctx)
+    val m = metaWithRoles(fw, ctx)
     val roleId = roleOverride.orElse(frameworkUtil.targetRoleOf(collectionId, ctx)).getOrElse("")
     val courses = lpPolicyUtil.coursesOf(lp)
     val skillsByCourse = claimsOf(courses, m, ctx)
@@ -259,10 +292,18 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
    * authoring matrix a no-op, so a role could only ever grow and would drift silently from the
    * spreadsheet it was authored in. The caller sends the full set; anything absent is removed.
    *
-   * The version is bumped on every change so an in-flight learning path can pin the requirements it
-   * was planned against (G2) rather than having its finish line moved underneath it.
+   * The version counts changes to the requirement set, so an admin can see a role was edited. It is
+   * not a pin: earlier requirement sets are not kept.
+   *
+   * A retired role stays retired: editing its requirements, or re-importing an old matrix that
+   * names it, must not quietly offer it to learners again. `reactivate` brings it back.
+   *
+   * The new rows are written before the removed ones are deleted, each in one batch. If the delete
+   * fails, the role briefly requires its old and new skills together until the write is retried;
+   * it never requires less than either.
    */
-  def roleUpsert(frameworkId: String, role: RoleDefinition, ctx: RequestContext): RoleDiff = {
+  def roleUpsert(frameworkId: String, role: RoleDefinition, ctx: RequestContext,
+                 reactivate: Boolean = false): RoleDiff = {
     val leaves = leavesOf(frameworkId, ctx).getOrElse(
       throw new IllegalArgumentException(
         s"Competency framework did not resolve: $frameworkId. Requirements cannot be validated, " +
@@ -270,14 +311,17 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
 
     val existing = dao.roleRowsOf(frameworkId, ctx).filter(_.roleId == role.roleId)
     val d = RoleAuthoring.diff(role.roleId, role.skills, existing.map(_.skillId).toSet, leaves)
+    requireSkills(frameworkId, List(d))
     val version = RoleAuthoring.nextVersion(
       if (existing.isEmpty) 0 else existing.map(_.version).max, d)
     val name = if (role.name.nonEmpty) role.name else role.roleId
+    val retired = existing.exists(_.status == RoleStatus.RETIRED)
+    val status = if (retired && !reactivate) RoleStatus.RETIRED else RoleStatus.LIVE
 
-    d.removed.foreach(sk => dao.deleteRoleSkill(frameworkId, role.roleId, sk, ctx))
-    // Unchanged rows are rewritten too, so a rename or an un-retire reaches every row of the role.
-    (d.added ++ d.unchanged).foreach(sk => dao.writeRoleSkill(
-      RoleSkillRow(frameworkId, role.roleId, sk, name, RoleStatus.LIVE, version, 0L), ctx))
+    // Unchanged rows are rewritten too, so a rename or a reactivation reaches every row of the role.
+    dao.writeRoleSkills((d.added ++ d.unchanged).toList.map(sk =>
+      RoleSkillRow(frameworkId, role.roleId, sk, name, status, version, 0L)), ctx)
+    dao.deleteRoleSkills(frameworkId, role.roleId, d.removed, ctx)
 
     if (d.rejected.nonEmpty)
       logger.info(ctx, s"competency.role: rejected non-leaf requirements | framework=$frameworkId " +
@@ -295,7 +339,7 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
    */
   def roleRetire(frameworkId: String, roleId: String, ctx: RequestContext): RoleDiff = {
     val rows = dao.roleRowsOf(frameworkId, ctx).filter(_.roleId == roleId)
-    rows.foreach(r => dao.writeRoleSkill(r.copy(status = RoleStatus.RETIRED), ctx))
+    dao.writeRoleSkills(rows.map(_.copy(status = RoleStatus.RETIRED)), ctx)
     invalidate(frameworkId, ctx)
     RoleDiff(roleId, Set.empty, Set.empty, rows.map(_.skillId).toSet, Set.empty, retired = rows.nonEmpty)
   }
@@ -317,11 +361,28 @@ class CompetencyService(cassandra: CassandraOperation, keyspace: String,
         s"Competency framework did not resolve: $frameworkId. Nothing was imported."))
     val existing = dao.roleRowsOf(frameworkId, ctx).groupBy(_.roleId)
 
-    roles.map { role =>
-      if (dryRun) RoleAuthoring.diff(role.roleId, role.skills,
-        existing.getOrElse(role.roleId, Nil).map(_.skillId).toSet, leaves)
-      else roleUpsert(frameworkId, role, ctx)
+    val diffs = roles.map(role => RoleAuthoring.diff(role.roleId, role.skills,
+      existing.getOrElse(role.roleId, Nil).map(_.skillId).toSet, leaves))
+    if (dryRun) diffs
+    else {
+      // Checked across the whole matrix first, so one bad row writes nothing rather than half.
+      requireSkills(frameworkId, diffs)
+      roles.map(roleUpsert(frameworkId, _, ctx))
     }
+  }
+
+  /**
+   * Rejects a role left with no valid leaf skill. Applying it would delete every row of the role -
+   * a role exists only as rows - so a typo or a missing `skills` key would silently remove it.
+   * Retiring is the explicit way to stop using a role.
+   */
+  private def requireSkills(frameworkId: String, diffs: List[RoleDiff]): Unit = {
+    val empty = diffs.filter(d => (d.added ++ d.unchanged).isEmpty)
+    if (empty.nonEmpty)
+      throw new IllegalArgumentException(
+        s"Roles with no valid leaf skill of $frameworkId: " +
+          empty.map(d => s"${d.roleId} (rejected: ${d.rejected.toList.sorted.mkString(", ")})").mkString("; ") +
+          ". Nothing was written. To stop using a role, retire it.")
   }
 
   // ---- admin ----------------------------------------------------------------------------------

@@ -4,8 +4,7 @@
 // (scripts/sunbird-yugabyte-migrations/sunbird-lern/sunbird_courses.cql) before any deployment;
 // scripts/init-yugabyte.sh applies this file for local development.
 //
-// A skill is held or not held. There is no proficiency scale, so no level or level_index column,
-// and no expiry, so no expires_on column and no expiry index table.
+// A skill is held or not held: there is no proficiency scale and no expiry.
 
 // --- Prerequisites on the existing Learning Path tables ---------------------------------------
 // Already applied. Retained so a fresh environment gets them in one pass.
@@ -16,16 +15,6 @@ ALTER TABLE sunbird_courses.user_enrolments ADD optional_nodes set<text>;
 // Persisted replacement for the JVM-local optionality latch. Distinguishes "computed, nothing
 // waived" from "not yet computed", which an empty set cannot do.
 ALTER TABLE sunbird_courses.user_enrolments ADD optionality_computed boolean;
-
-// --- Superseded tables ------------------------------------------------------------------------
-// The level-based tables are dropped rather than altered: a level column with no scale behind it
-// is worse than no column. Confirm no environment holds real evidence rows before running these.
-
-DROP TABLE IF EXISTS sunbird_courses.user_competency_evidence;
-DROP TABLE IF EXISTS sunbird_courses.user_competency;
-DROP TABLE IF EXISTS sunbird_courses.user_competency_position;
-DROP TABLE IF EXISTS sunbird_courses.competency_expiry_index;
-DROP TABLE IF EXISTS sunbird_courses.competency_requirement;
 
 // --- Evidence ledger and skill profile --------------------------------------------------------
 
@@ -81,30 +70,27 @@ CREATE TABLE IF NOT EXISTS sunbird_courses.user_skill (
 
 // What a role requires. One row per (role, skill) pair - one tick in the authoring matrix.
 //
-// THIS TABLE IS THE SOURCE OF TRUTH, not a cache. design-v2 put the map in the Knowlg framework as
-// a `role` category carrying associations to leaf terms; it lives here instead, so roles can change
-// without republishing the framework and so nothing depends on Knowlg round-tripping custom term
-// associations. The framework path is deleted outright rather than kept as a fallback - two
-// authorities on what a role requires is the failure mode v1 shipped, where competency_requirement
-// was written and never read.
+// THIS TABLE IS THE SOURCE OF TRUTH, not a cache. Roles are not held in the Knowlg framework, so
+// they can change without republishing it and nothing depends on Knowlg round-tripping custom term
+// associations. There is no framework fallback: two authorities on what a role requires would
+// drift.
 //
 // The skill TREE stays in the framework: it is the vocabulary, and still the authority on what a
-// leaf is. Only these role edges moved out.
+// leaf is.
 //
 // Partitioned on framework_id alone so `WHERE framework_id = ?` returns every role in one read -
-// that is how CompetencyMeta.roleSkills is built. v1's ((framework_id, positionid), competencyid)
-// made "list all roles" unqueryable. 500 roles x ~20 skills is 10k rows per partition.
+// that is how CompetencyMeta.roleSkills is built. 500 roles x ~20 skills is 10k rows per partition.
 //
 // role_name and status are denormalised onto every row of a role: a role exists because it requires
 // something, so there is no separate registry table. Renaming or retiring rewrites all of a role's
-// rows - safe as a single-partition BATCH, since they share framework_id.
+// rows in one logged batch, which stays in one partition since they share framework_id.
 CREATE TABLE IF NOT EXISTS sunbird_courses.role_skill (
     framework_id text,
     roleid       text,
     skillid      text,          // must be a LEAF of the framework's competency tree
     role_name    text,          // identical on every row of a role
     status       text,          // LIVE | RETIRED - roles are retired, never deleted
-    version      int,           // requirement-set version; bumped on any change to this role
+    version      int,           // counts edits to the requirement set; not a pin
     added_on     timestamp,
     PRIMARY KEY (framework_id, roleid, skillid)
 );

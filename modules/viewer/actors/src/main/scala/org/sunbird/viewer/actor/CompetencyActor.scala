@@ -121,10 +121,13 @@ class CompetencyActor extends BaseEnrolmentActor {
 
   private def roleGap(uid: String, frameworkId: String, roleId: String,
                       ctx: RequestContext): util.Map[String, AnyRef] = {
-    val (rows, readiness) = service.gap(uid, frameworkId, roleId, ctx)
     val m = new util.HashMap[String, AnyRef]()
     m.put("role", roleId)
-    m.put("readiness", Integer.valueOf(readiness))
+    val measured = service.gap(uid, frameworkId, roleId, ctx)
+    // A role that does not resolve gets no readiness at all, never a 100 the client would show.
+    m.put("resolved", java.lang.Boolean.valueOf(measured.isDefined))
+    val (rows, readiness) = measured.getOrElse((Nil, -1))
+    m.put("readiness", if (measured.isDefined) Integer.valueOf(readiness) else null)
     m.put("required", Integer.valueOf(rows.size))
     m.put("met", Integer.valueOf(rows.count(_.status == GapCalculator.MET)))
     m.put("gap", rows.map(gapRow).asJava)
@@ -257,13 +260,13 @@ class CompetencyActor extends BaseEnrolmentActor {
   private def frameworkRead(request: Request): Unit = {
     val ctx = request.getRequestContext
     val frameworkId = require(request, "frameworkId")
-    val m = service.meta(frameworkId, ctx)
+    val m = service.metaWithRoles(frameworkId, ctx)
     if (m.isEmpty) throw new ProjectCommonException(
       ResponseCode.resourceNotFound.getErrorCode,
       s"Competency framework did not resolve, or declares no leaf skills: $frameworkId",
       ResponseCode.RESOURCE_NOT_FOUND.getResponseCode)
     val roles: util.Map[String, util.List[String]] =
-      m.roleSkills.map { case (role, skills) => role -> skills.toList.sorted.asJava }.asJava
+      m.liveRoleSkills.map { case (role, skills) => role -> skills.toList.sorted.asJava }.asJava
     reply(
       "frameworkId" -> frameworkId,
       "tierLabels" -> m.tierLabels.asJava,
@@ -281,8 +284,8 @@ class CompetencyActor extends BaseEnrolmentActor {
   // The role -> skill map lives in `role_skill`, not in the framework, so lern owns these writes.
   // They are ordinary authenticated routes, deliberately NOT under /private: any path containing
   // "private" skips token validation in LernServiceRequestInterceptor, and these requirements are
-  // the input to every learner's readiness. Restricting them to admins is a Kong concern, which is
-  // where this platform does authorisation.
+  // the input to every learner's readiness. CompetencyController restricts them to org and system
+  // admins, from the user token.
 
   private def strings(request: Request, key: String): Set[String] =
     Option(request.get(key)).collect {
@@ -328,7 +331,7 @@ class CompetencyActor extends BaseEnrolmentActor {
    * Admin assigns a learner's CURRENT role.
    *
    * The target user comes from an explicit `assignUserId` body key, NOT from the token: this is the
-   * one competency write that acts on somebody else. Restricting who may call it is a Kong concern,
+   * one competency write that acts on somebody else. CompetencyController restricts it to admins,
    * as with the other role-authoring endpoints.
    */
   private def roleAssign(request: Request): Unit = {
@@ -355,13 +358,17 @@ class CompetencyActor extends BaseEnrolmentActor {
       "count" -> Integer.valueOf(roles.size))
   }
 
-  /** Replaces a role's requirement set. `skills` is the FULL set; anything absent is removed. */
+  /**
+   * Replaces a role's requirement set. `skills` is the FULL set; anything absent is removed.
+   * A retired role stays retired unless the request sends `"reactivate": true`.
+   */
   private def roleUpsert(request: Request): Unit = {
     val ctx = request.getRequestContext
     val frameworkId = require(request, "frameworkId")
     val roleId = require(request, "roleId")
     val d = service.roleUpsert(frameworkId,
-      RoleDefinition(roleId, str(request, "name").getOrElse(roleId), strings(request, "skills")), ctx)
+      RoleDefinition(roleId, str(request, "name").getOrElse(roleId), strings(request, "skills")), ctx,
+      reactivate = str(request, "reactivate").contains("true"))
     logger.info(ctx, s"competency.role: upsert | framework=$frameworkId role=$roleId " +
       s"added=${d.added.size} removed=${d.removed.size} rejected=${d.rejected.size}")
     reply("frameworkId" -> frameworkId, "diff" -> diffRow(d))

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1124" height="395" viewBox="0 0 1124 395">
+<defs><marker id="a3f51b5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#3f51b5"/></marker><marker id="af9ab00" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#f9ab00"/></marker></defs>
+<rect x="0" y="0" width="1124" height="395" fill="#ffffff"/>
+<text x="20.0" y="28.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#202124" text-anchor="start" style="white-space:pre">One course, two frameworks</text>
+<text x="190.0" y="74.0" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#3f51b5" text-anchor="middle" style="white-space:pre">TAXONOMY FRAMEWORK</text>
+<text x="190.0" y="92.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">fw_health_taxonomy  ·  where does it belong?</text>
+<rect x="40" y="108" width="300" height="48" rx="12" fill="#e8eaf6" stroke="#3f51b5" stroke-width="2"/>
+<text x="190.0" y="129.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle" style="white-space:pre">department</text>
+<text x="190.0" y="147.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">category</text>
+<rect x="40" y="170" width="300" height="48" rx="12" fill="#e8eaf6" stroke="#3f51b5" stroke-width="2"/>
+<text x="190.0" y="191.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle" style="white-space:pre">specialty</text>
+<text x="190.0" y="209.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">category</text>
+<rect x="40" y="232" width="300" height="48" rx="12" fill="#e8eaf6" stroke="#3f51b5" stroke-width="2"/>
+<text x="190.0" y="253.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle" style="white-space:pre">language</text>
+<text x="190.0" y="271.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">category</text>
+<rect x="40" y="294" width="300" height="48" rx="12" fill="#e8eaf6" stroke="#3f51b5" stroke-width="2"/>
+<text x="190.0" y="315.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle" style="white-space:pre">topic</text>
+<text x="190.0" y="333.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">category</text>
+<text x="190.0" y="372.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#3f51b5" text-anchor="middle" style="white-space:pre">drives catalogue, search, filters</text>
+<text x="950.0" y="74.0" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#f9ab00" text-anchor="middle" style="white-space:pre">COMPETENCY FRAMEWORK</text>
+<text x="950.0" y="92.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">fw_health_competency  ·  what does it teach?</text>
+<rect x="800" y="108" width="300" height="234" rx="12" fill="#fef7e0" stroke="#f9ab00" stroke-width="2"/>
+<text x="950.0" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle" style="white-space:pre">competency</text>
+<text x="950.0" y="224.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">skill tree, 3+ tiers</text>
+<text x="950.0" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">nested by children</text>
+<text x="950.0" y="256.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">leaves are the skills</text>
+<text x="950.0" y="372.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#f9ab00" text-anchor="middle" style="white-space:pre">drives evidence, waiving, gap</text>
+<rect x="410" y="150" width="320" height="150" rx="12" fill="#e6f4ea" stroke="#34a853" stroke-width="2"/>
+<text x="570.0" y="174.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle" style="white-space:pre">Course: Safe Medication Practice</text>
+<text x="570.0" y="192.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">framework = fw_health_taxonomy</text>
+<text x="570.0" y="208.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">department = state-health</text>
+<text x="570.0" y="224.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">specialty = critical-care</text>
+<text x="570.0" y="240.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">topic = medication-safety</text>
+<text x="570.0" y="256.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre"></text>
+<text x="570.0" y="272.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">competencyFramework = fw_health_competency</text>
+<text x="570.0" y="288.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#5f6368" text-anchor="middle" style="white-space:pre">skill = [dosage-calculation, iv-administration]</text>
+<polyline points="340.0,225.0 408.0,225.0" fill="none" stroke="#3f51b5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#a3f51b5)"/>
+<polyline points="800.0,165.0 732.0,200.0" fill="none" stroke="#f9ab00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#af9ab00)"/>
+</svg>

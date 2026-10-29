@@ -90,7 +90,7 @@ class RoleAuthoringSpec extends AnyFlatSpec with Matchers {
     nextVersion(3, d) shouldBe 4
   }
 
-  // Re-applying an unchanged matrix must not invalidate a learning path pinned to a version.
+  // Re-applying an unchanged matrix must not count as an edit.
   it should "hold steady when nothing changed" in {
     val same = Set("ppe-use")
     nextVersion(3, diff("r1", same, same, leaves)) shouldBe 3

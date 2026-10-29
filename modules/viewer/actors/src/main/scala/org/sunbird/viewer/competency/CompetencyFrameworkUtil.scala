@@ -14,9 +14,9 @@ import scala.collection.JavaConverters._
  * Resolves a competency framework into the vocabulary the engine needs, and resolves the `skills`
  * tags off content.
  *
- * Two categories: `competency`, whose terms nest by `children`, and `role`, whose terms associate
- * to the leaf skills they require. A term with no children is a leaf, and a leaf is the only thing
- * content may be tagged with or a role may require.
+ * The framework holds the skill tree only: the `competency` category, whose terms nest by
+ * `children`. A term with no children is a leaf, and a leaf is the only thing content may be tagged
+ * with or a role may require. Roles live in `role_skill` and are read per request by `withRoles`.
  *
  * An unresolvable framework is not silently treated as "no skills": callers get
  * CompetencyMeta.empty and are expected to surface it.
@@ -301,11 +301,11 @@ object CompetencyFrameworkUtil {
    * .readRoleSkills`. Injected rather than taken as a DAO dependency so the parsing half of this
    * object stays free of Cassandra, and so a test can drive it with a literal map.
    */
-  def apply(roleSource: (String, RequestContext) => Map[String, Set[String]]): CompetencyFrameworkUtil =
+  def apply(roleSource: (String, RequestContext) => RoleIndex): CompetencyFrameworkUtil =
     new CompetencyFrameworkUtil(roleSource)
 }
 
-class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String, Set[String]]) {
+class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => RoleIndex) {
 
   import CompetencyFrameworkUtil._
 
@@ -343,6 +343,9 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
     post(searchUrl, mapper.writeValueAsString(new util.HashMap[String, AnyRef]() {{ put("request", request) }}))
   }
 
+  /** Raw framework read response. Overridable so a test can serve a framework without Knowlg. */
+  protected def fetchFramework(frameworkId: String): String = get(frameworkReadUrl(frameworkId))
+
   /** Framework vocabulary, cached. CompetencyMeta.empty when the framework does not resolve. */
   def meta(frameworkId: String, ctx: RequestContext): CompetencyMeta = {
     if (StringUtils.isBlank(frameworkId)) return CompetencyMeta.empty
@@ -350,7 +353,7 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
     val hit = metaCache.get(frameworkId)
     if (hit != null && hit._1 > now) return hit._2
 
-    val json = get(frameworkReadUrl(frameworkId))
+    val json = fetchFramework(frameworkId)
     val (treeLeaves, treeDepth) = parseTree(json)
     // No competency tree: a taxonomy framework's flat `skill` category is one tier of skills.
     val flat = treeLeaves.isEmpty
@@ -369,26 +372,45 @@ class CompetencyFrameworkUtil(roleSource: (String, RequestContext) => Map[String
       logger.warn(s"CompetencyFrameworkUtil: framework $frameworkId is only $depth tiers deep; " +
         "the spec requires at least three")
 
+    // Roles are NOT cached here: the cache is per JVM, so a role edit on another pod would stay
+    // invisible for the whole TTL. `withRoles` reads them fresh.
     val built = CompetencyMeta(
       frameworkId = frameworkId,
       tierLabels = parseTierLabels(json),
       leaves = leaves,
       depth = depth,
-      roleSkills = leafOnly(frameworkId, roleSource(frameworkId, ctx), leaves),
+      roleSkills = Map.empty,
       claimsByNode = Map.empty,
       codeByName = parseLeafNames(json, leaves))
     metaCache.put(frameworkId, (now + metaTtl, built))
     built
   }
 
-  /** Leaf skills one role requires. Empty when the role declares none or does not exist. */
-  def requirements(frameworkId: String, roleId: String, ctx: RequestContext): Set[String] =
-    if (StringUtils.isBlank(frameworkId) || StringUtils.isBlank(roleId)) Set.empty
-    else meta(frameworkId, ctx).skillsOf(roleId)
+  /**
+   * The cached vocabulary plus the framework's roles, read from `role_skill` on every call so a
+   * role edit on any pod is seen at once. One partition read; only the role paths pay for it.
+   */
+  def withRoles(frameworkId: String, ctx: RequestContext): CompetencyMeta = {
+    val m = meta(frameworkId, ctx)
+    if (m.isEmpty) m
+    else {
+      val roles = roleSource(frameworkId, ctx)
+      m.copy(roleSkills = leafOnly(frameworkId, roles.skills, m.leaves), retiredRoles = roles.retired)
+    }
+  }
+
+  /**
+   * Leaf skills one role requires, RETIRED roles included. None when the role does not exist or
+   * requires no skill that is still a leaf: such a role cannot be measured, and an empty
+   * requirement set must never read as fully met.
+   */
+  def requirements(frameworkId: String, roleId: String, ctx: RequestContext): Option[Set[String]] =
+    if (StringUtils.isBlank(frameworkId) || StringUtils.isBlank(roleId)) None
+    else Some(withRoles(frameworkId, ctx).skillsOf(roleId)).filter(_.nonEmpty)
 
   def allRequirements(frameworkId: String, ctx: RequestContext): Map[String, Set[String]] =
     if (StringUtils.isBlank(frameworkId)) Map.empty
-    else meta(frameworkId, ctx).roleSkills
+    else withRoles(frameworkId, ctx).roleSkills
 
   /**
    * The framework a collection's skills belong to: `competencyFramework`, else its taxonomy
