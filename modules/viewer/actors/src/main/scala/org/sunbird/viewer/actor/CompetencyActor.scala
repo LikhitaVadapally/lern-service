@@ -22,7 +22,20 @@ class CompetencyActor extends BaseEnrolmentActor {
   private var service: CompetencyService =
     CompetencyService(cassandraOperation, enrolmentDBInfo.getKeySpace)
 
-  override def onReceive(request: Request): Unit = {
+  /**
+   * CompetencyService signals a request it cannot honour - an unknown or retired role, a framework
+   * that does not resolve, a role left with no valid skill - with IllegalArgumentException. Anything
+   * that is not a ProjectCommonException reaches the client as a 500, so it is translated here into
+   * a 400 carrying the service's message.
+   */
+  override def onReceive(request: Request): Unit =
+    try dispatch(request)
+    catch {
+      case e: IllegalArgumentException => throw new ProjectCommonException(
+        ResponseCode.invalidRequestData, e.getMessage, ResponseCode.CLIENT_ERROR.getResponseCode)
+    }
+
+  private def dispatch(request: Request): Unit = {
     request.getOperation match {
       case "profileRead"     => profileRead(request)
       case "gapRead"         => gapRead(request)
@@ -50,7 +63,7 @@ class CompetencyActor extends BaseEnrolmentActor {
 
   private def require(request: Request, key: String): String =
     str(request, key).getOrElse(throw new ProjectCommonException(
-      ResponseCode.mandatoryParamsMissing.getErrorCode,
+      ResponseCode.mandatoryParamsMissing,
       s"Missing mandatory parameter: $key",
       ResponseCode.CLIENT_ERROR.getResponseCode))
 
@@ -65,13 +78,16 @@ class CompetencyActor extends BaseEnrolmentActor {
     val ctx = request.getRequestContext
     val uid = userId(request)
     val withEvidence = Option(request.get("evidence")).exists(v => "true".equalsIgnoreCase(v.toString))
-    val entries = service.profile(uid, ctx).map { e =>
+    val held =
+      if (withEvidence) service.profileWithEvidence(uid, ctx)
+      else service.profile(uid, ctx).map(_ -> Nil)
+    val entries = held.map { case (e, evidence) =>
       val m = new util.HashMap[String, AnyRef]()
       m.put("skillId", e.skillId)
       m.put("frameworkId", e.frameworkId)
       m.put("sourceType", e.sourceType)
       m.put("attainedOn", new util.Date(e.attainedOn))
-      if (withEvidence) m.put("evidence", service.evidenceOf(uid, e.skillId, ctx).map { ev =>
+      if (withEvidence) m.put("evidence", evidence.map { ev =>
         val em = new util.HashMap[String, AnyRef]()
         em.put("evidenceId", ev.evidenceId)
         em.put("sourceType", ev.sourceType)
@@ -218,7 +234,7 @@ class CompetencyActor extends BaseEnrolmentActor {
     val existing = service.role(uid, ctx)
     val frameworkId = str(request, "frameworkId").orElse(existing.map(_.frameworkId))
       .getOrElse(throw new ProjectCommonException(
-        ResponseCode.mandatoryParamsMissing.getErrorCode,
+        ResponseCode.mandatoryParamsMissing,
         "Missing mandatory parameter: frameworkId",
         ResponseCode.CLIENT_ERROR.getResponseCode))
     val targets = Option(request.get("targetRoles")).collect {
@@ -242,7 +258,7 @@ class CompetencyActor extends BaseEnrolmentActor {
     val ok = service.importExternal(uid, frameworkId, skillId, sourceId,
       str(request, "issuerId"), str(request, "note"), occurredOn, ctx)
     if (!ok) throw new ProjectCommonException(
-      ResponseCode.invalidRequestData.getErrorCode,
+      ResponseCode.invalidRequestData,
       s"Unresolvable framework, or $skillId is not a leaf skill of it: framework=$frameworkId",
       ResponseCode.CLIENT_ERROR.getResponseCode)
     reply("status" -> "SUCCESS")
@@ -262,7 +278,7 @@ class CompetencyActor extends BaseEnrolmentActor {
     val frameworkId = require(request, "frameworkId")
     val m = service.metaWithRoles(frameworkId, ctx)
     if (m.isEmpty) throw new ProjectCommonException(
-      ResponseCode.resourceNotFound.getErrorCode,
+      ResponseCode.resourceNotFound,
       s"Competency framework did not resolve, or declares no leaf skills: $frameworkId",
       ResponseCode.RESOURCE_NOT_FOUND.getResponseCode)
     val roles: util.Map[String, util.List[String]] =
@@ -295,7 +311,7 @@ class CompetencyActor extends BaseEnrolmentActor {
   private def roleDef(m: util.Map[String, AnyRef]): RoleDefinition = {
     val code = Option(m.get("roleId")).map(_.toString.trim).filter(_.nonEmpty).getOrElse(
       throw new ProjectCommonException(
-        ResponseCode.mandatoryParamsMissing.getErrorCode,
+        ResponseCode.mandatoryParamsMissing,
         "Every entry in `roles` needs a roleId",
         ResponseCode.CLIENT_ERROR.getResponseCode))
     val skills = Option(m.get("skills")).collect {
@@ -380,7 +396,7 @@ class CompetencyActor extends BaseEnrolmentActor {
     val roleId = require(request, "roleId")
     val d = service.roleRetire(frameworkId, roleId, ctx)
     if (!d.retired) throw new ProjectCommonException(
-      ResponseCode.resourceNotFound.getErrorCode,
+      ResponseCode.resourceNotFound,
       s"No such role in framework $frameworkId: $roleId",
       ResponseCode.RESOURCE_NOT_FOUND.getResponseCode)
     logger.info(ctx, s"competency.role: retired | framework=$frameworkId role=$roleId")
@@ -397,7 +413,7 @@ class CompetencyActor extends BaseEnrolmentActor {
       }
     }.getOrElse(Nil)
     if (rows.isEmpty) throw new ProjectCommonException(
-      ResponseCode.mandatoryParamsMissing.getErrorCode,
+      ResponseCode.mandatoryParamsMissing,
       "Missing mandatory parameter: roles",
       ResponseCode.CLIENT_ERROR.getResponseCode)
     val dryRun = Option(request.get("dryRun")).exists(v => v.toString.equalsIgnoreCase("true"))
@@ -410,7 +426,7 @@ class CompetencyActor extends BaseEnrolmentActor {
       "changed" -> Integer.valueOf(diffs.count(_.changed)))
   }
 
-  /** Rebuilds a learner's profile from the ledger, re-deriving evidence first. */
+  /** Re-derives a learner's evidence from their enrolments and attempts; badges follow. */
   private def reproject(request: Request): Unit = {
     val ctx = request.getRequestContext
     val uid = require(request, "reprojectUserId")

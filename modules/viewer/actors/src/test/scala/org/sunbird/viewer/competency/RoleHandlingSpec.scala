@@ -33,7 +33,7 @@ class RoleHandlingSpec extends AnyFlatSpec with Matchers {
   private val keys = Map(
     "role_skill" -> List("framework_id", "roleid", "skillid"),
     "user_role" -> List("userid"),
-    "user_skill" -> List("userid", "skillid"))
+    "user_skill_evidence" -> List("userid", "skillid", "evidenceid"))
 
   /**
    * Just enough of CassandraOperation for the role and profile tables.
@@ -261,6 +261,16 @@ class RoleHandlingSpec extends AnyFlatSpec with Matchers {
       s.roleImport(fw, List(role("nursing-officer", "c"), role("staff-nurse-icu")), dryRun = false, null)
     s.roleRead(fw, None, null).map(r => r.roleId -> r.skills) shouldBe
       List("staff-nurse-icu" -> Set("a", "b"))
+  }
+
+  // A dry run is how an admin checks a matrix before applying it; passing what the real run then
+  // refuses would defeat it.
+  it should "refuse in a dry run exactly what the real run refuses" in {
+    val (s, _) = newService()
+    an[IllegalArgumentException] should be thrownBy
+      s.roleImport(fw, List(role("nursing-officer", "comp-1", "typo")), dryRun = true, null)
+    s.roleImport(fw, List(role("nursing-officer", "c", "typo")), dryRun = true, null)
+      .map(d => (d.roleId, d.added.toSet, d.rejected.toSet)) shouldBe List(("nursing-officer", Set("c"), Set("typo")))
   }
 
   // ---- D6: a role write that fails part-way must not leave the role half changed ----------------

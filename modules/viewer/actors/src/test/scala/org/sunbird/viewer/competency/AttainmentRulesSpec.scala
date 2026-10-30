@@ -117,6 +117,23 @@ class AttainmentRulesSpec extends AnyFlatSpec with Matchers {
     AttainmentRules.project(List(a, b)) shouldBe AttainmentRules.project(List(b, a))
   }
 
+  "profile" should "hold one entry per skill with a live row, read off its governing row" in {
+    val rows = List(
+      ev("hand-hygiene", SourceType.ASSESSMENT, 4000L),
+      ev("hand-hygiene", SourceType.COURSE, 2000L),
+      ev("ppe-use", SourceType.COURSE, 1000L, revoked = true),
+      ev("dosage-calculation", SourceType.EXTERNAL, 3000L))
+    val p = AttainmentRules.profile(rows)
+    p.keySet shouldBe Set("hand-hygiene", "dosage-calculation")
+    p("hand-hygiene").attainedOn shouldBe 2000L
+    p("hand-hygiene").sourceType shouldBe SourceType.COURSE
+    p("hand-hygiene").governingEvidenceId shouldBe rows(1).evidenceId
+  }
+
+  it should "be empty for a learner with no evidence" in {
+    AttainmentRules.profile(Nil) shouldBe Map.empty[String, SkillEntry]
+  }
+
   "isHeld" should "agree with project" in {
     AttainmentRules.isHeld(List(ev("s", SourceType.COURSE, 1L))) shouldBe true
     AttainmentRules.isHeld(List(ev("s", SourceType.COURSE, 1L, revoked = true))) shouldBe false
@@ -161,35 +178,45 @@ class AttainmentRulesSpec extends AnyFlatSpec with Matchers {
     early < late shouldBe true
   }
 
-  "AttainmentRules.isDuplicateCompletion" should "spot the same course credited again" in {
+  "AttainmentRules.isDuplicate" should "spot the same course credited again" in {
     val existing = Seq(("COURSE", "do_course1", "b1", false))
-    AttainmentRules.isDuplicateCompletion(existing, "COURSE", "do_course1", "b1") shouldBe true
+    AttainmentRules.isDuplicate(existing, "COURSE", "do_course1", "b1") shouldBe true
   }
 
   it should "allow a different course, batch or type through" in {
     val existing = Seq(("COURSE", "do_course1", "b1", false))
-    AttainmentRules.isDuplicateCompletion(existing, "COURSE", "do_course2", "b1") shouldBe false
-    AttainmentRules.isDuplicateCompletion(existing, "COURSE", "do_course1", "b2") shouldBe false
-    AttainmentRules.isDuplicateCompletion(existing, "LEARNING_PATH", "do_course1", "b1") shouldBe false
+    AttainmentRules.isDuplicate(existing, "COURSE", "do_course2", "b1") shouldBe false
+    AttainmentRules.isDuplicate(existing, "COURSE", "do_course1", "b2") shouldBe false
+    AttainmentRules.isDuplicate(existing, "LEARNING_PATH", "do_course1", "b1") shouldBe false
   }
 
   // A revoked row is not evidence any more; re-earning the course must be able to record it again.
   it should "ignore a revoked row" in {
-    AttainmentRules.isDuplicateCompletion(Seq(("COURSE", "do_c", "b1", true)), "COURSE", "do_c", "b1") shouldBe false
+    AttainmentRules.isDuplicate(Seq(("COURSE", "do_c", "b1", true)), "COURSE", "do_c", "b1") shouldBe false
   }
 
-  // Each attempt is its own event, and creditAssessments unions across them.
-  it should "never dedupe an assessment" in {
+  // Held needs one live row; a second passing attempt of the same question set adds nothing.
+  it should "dedupe a repeat pass of the same question set" in {
     val existing = Seq(("ASSESSMENT", "do_qs1", "b1", false))
-    AttainmentRules.isDuplicateCompletion(existing, "ASSESSMENT", "do_qs1", "b1") shouldBe false
+    AttainmentRules.isDuplicate(existing, "ASSESSMENT", "do_qs1", "b1") shouldBe true
+    AttainmentRules.isDuplicate(existing, "ASSESSMENT", "do_qs2", "b1") shouldBe false
+  }
+
+  it should "let an assessment through again once its row is revoked" in {
+    AttainmentRules.isDuplicate(Seq(("ASSESSMENT", "do_qs1", "b1", true)), "ASSESSMENT", "do_qs1", "b1") shouldBe false
+  }
+
+  // sourceId defaults to "external", so two different credentials would otherwise collide.
+  it should "never dedupe an external import" in {
+    AttainmentRules.isDuplicate(Seq(("EXTERNAL", "external", "", false)), "EXTERNAL", "external", "") shouldBe false
   }
 
   it should "be false when nothing has been recorded" in {
-    AttainmentRules.isDuplicateCompletion(Nil, "COURSE", "do_c", "b1") shouldBe false
+    AttainmentRules.isDuplicate(Nil, "COURSE", "do_c", "b1") shouldBe false
   }
 
   it should "dedupe a Learning Path completion too" in {
-    AttainmentRules.isDuplicateCompletion(Seq(("LEARNING_PATH", "do_lp", "b", false)),
+    AttainmentRules.isDuplicate(Seq(("LEARNING_PATH", "do_lp", "b", false)),
       "LEARNING_PATH", "do_lp", "b") shouldBe true
   }
 }
